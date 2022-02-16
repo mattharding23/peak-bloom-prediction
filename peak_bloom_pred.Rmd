@@ -62,7 +62,7 @@ library(rjson)
 json_data <- fromJSON(paste(readLines("data/full.json"), collapse = ""))
 ```
 
-### convert json to df to filter for regions needed
+### Convert json to df to filter for regions needed
 ```{r}
 # Set up data frame
 df <- tibble(
@@ -111,7 +111,7 @@ for (i in 1:length(json_data)) {
 }
 ```
 
-## Find closest station for each location
+### Find closest station for each location
 ```{r}
 df$lat <- as.numeric(df$lat)
 df$long <- as.numeric(df$long)
@@ -129,10 +129,10 @@ Sw_df <- df %>%
   filter(lat > 47.4 & lat < 47.7 & long > 7.6 & long < 7.85)
 ```
 
-
+# Use DC weather data to begin building a model
 Starting with DC weather to build an initial model
 
-## Import DC weather
+### Import DC weather
 ```{r}
 ## Read in csv file
 dc_weather <- read_csv("data/DC_weather.csv")
@@ -178,14 +178,16 @@ dc_weather$tmax_C <- dc_weather$tmax_C + 273.15
 colnames(dc_weather)[4:6] <- c("tavg_K", "tmin_K", "tmax_K")
 ```
 
-## Get DC blossom data
+### Get DC blossom data
 ```{r}
 # Read in DC cherry tree data
 dc_cherry <- read_csv("data/washingtondc.csv")
 ```
 
 
-# Create function to merge weather data with bloom data to build model
+## Create function that creates variables to train a model with
+
+### Create function to merge weather data with bloom data to build model
 ```{r}
 
 bloom_merge <- function(bloom, weather, yr) {
@@ -280,7 +282,9 @@ bloom_merge <- function(bloom, weather, yr) {
 
 Note: I initially wanted to include precipitation in my model however it actually made my model less accurate so I dropped it from the model. 
 
-## Dataset for modeling DC
+## Create Dataset to model DC blooms
+
+### Dataset for modeling DC
 ```{r}
 # Filter cherry tree data for past 1946 (first point in which there is precipitation data)
 dc_cherry_w_weath <- dc_cherry %>%
@@ -296,16 +300,17 @@ for (i in 2:nrow(dc_cherry_w_weath)) {
 }
 ```
 
+## Try a ridge regression model
 
-# Ridge regression for bloom data
+### Ridge regression for bloom data
 ```{r}
 set.seed(1212)
 
 # Create training and test sets
 training_samples <- dc_bloom$bloom_doy %>%
   createDataPartition(p = 0.8, list = FALSE)
-train_data <- dc_bloom[training_samples, 7:22]
-test_data <- dc_bloom[-training_samples, 7:22]
+train_data <- dc_bloom[training_samples, 7:40]
+test_data <- dc_bloom[-training_samples, 7:40]
 
 # Set up data in matrix to run ridge regression
 x <- model.matrix(bloom_doy ~ ., train_data)[, -1]
@@ -336,7 +341,10 @@ tibble(
   Rsquare = R2(ridge_pred_dc, test_data$bloom_doy)
 )
 ```
-# Run lasso Regression
+
+## Try a lasso regression model next
+
+### Run lasso Regression
 ```{r}
 ## Use lasso to see if model as fewer strong variables
 
@@ -362,7 +370,9 @@ tibble(
 )
 ```
 
-## Elastic Net regression
+## Finally try elastic net regression
+
+### Elastic Net regression
 ```{r}
 ## Using elastic net regression to try to find best combination of alpha and lambda parameters
 
@@ -379,9 +389,8 @@ cv_elas_net <- train(
 (en_lambda <- cv_elas_net$bestTune)
 ```
 
-From the elastic net regression I can see that a ridge regression (alpha = 1) is my best option. However, elastic net chooses a very different lambda value. So I will try ridge regression again using this value to see if I can lower my RMSE and increase my adjusted R^2.
 
-## Elastic Net Regression
+### Elastic Net Regression
 ```{r}
 # Fit elastic net regression using alpha and lambda found from cross validation
 fit_net_dc <- glmnet(x, y, 
@@ -417,7 +426,9 @@ dc_preds <- tibble("year" = dc_bloom$year[-training_samples],
 
 I feel comfortable that my model elastic net ridge regression model is relatively accurate for DC. I am curious as to whether it will translate well to other cities. I will next test Kyoto. 
 
-## Import Kyoto weather
+# Move onto updating model with Kyoto Data
+
+### Import Kyoto weather
 ```{r}
 ## Read in csv file
 ky_weather <- read_csv("data/kyoto_weather.csv")
@@ -445,7 +456,7 @@ ky_weather <- ky_weather %>%
   ungroup()
 ```
 
-## Replace NA values for Tmax with a modeled version
+### Replace NA values for Tmax with a modeled version
 ```{r}
 # Create dummy data frame for values that are not NA in the shown variables
 ky_na <- ky_weather %>%
@@ -478,6 +489,7 @@ tmax_mod <- glm(tmax ~ tavg + days_into_year, data = ky_na)
 ky_weather$tmax[is.na(ky_weather$tmax)] <- predict(tmax_mod, ky_weather[is.na(ky_weather$tmax), ])
 ```
 
+### Replace min temp NA values
 ```{r}
 # Create dummy data frame for values that are not NA in the shown variables
 ky_na <- ky_weather %>%
@@ -510,7 +522,7 @@ tmin_mod <- glm(tmin ~ tavg + days_into_year + tmax, data = ky_na)
 ky_weather$tmin[is.na(ky_weather$tmin)] <- predict(tmin_mod, ky_weather[is.na(ky_weather$tmin), ])
 ```
 
-## Finish cleaning Kyoto weather data
+### Finish cleaning Kyoto weather data
 ```{r}
 # Now that I have all tmax and min values modeled I can replace tavg values with average with min and max
 #   replace missing tavg values with avg of min and max tempuratures of said day
@@ -534,7 +546,7 @@ ky_weather$tmax <- ky_weather$tmax + 273.15
 colnames(ky_weather)[4:6] <- c("tavg_K", "tmin_K", "tmax_K")
 ```
 
-## Get Kyoto blossom tree data
+### Get Kyoto blossom tree data
 ```{r}
 # Read in DC cherry tree data
 ky_cherry <- read_csv("data/kyoto.csv") %>%
@@ -544,7 +556,7 @@ ky_cherry <- read_csv("data/kyoto.csv") %>%
 
 ```
 
-## Create new data frame with kyoto bloom data and modeling variables
+### Create new data frame with kyoto bloom data and modeling variables
 ```{r}
 ## Now that I have replaced missing values I will combine the blooming data set and weather dataset.
 # Filter cherry tree data for past 1951 (first year in which all data is there)
@@ -561,11 +573,11 @@ for (i in 2:nrow(ky_cherry_w_weath)) {
 }
 ```
 
+## Test old model first
 
-
-## Now test how accurate predictions from DC model are for Kyoto
+### Now test how accurate predictions from DC model are for Kyoto
 ```{r}
-x_test <- model.matrix(bloom_doy ~ ., ky_bloom[, 7:31])[, -1]
+x_test <- model.matrix(bloom_doy ~ ., ky_bloom[, 7:40])[, -1]
 
 # Make predictions from elastic net regression model from DC data
 dc_net_pred_ky <- fit_net_dc %>%
@@ -580,14 +592,16 @@ tibble(
 ky_en_ridge_preds <- tibble(ky_bloom$year, ky_bloom$bloom_doy, dc_net_pred_ky)
 ```
 
-I want to see if I can make the prediction better by combining the bloom datasets then running a model over the combined data. 
+Not as good, I want to see if I can make the prediction better by combining the bloom datasets then running a model over the combined data. 
 
-## Combine rows of dc_bloom & ky_bloom
+## Try combining data to make a better model
+
+### Combine rows of dc_bloom & ky_bloom
 ```{r}
 blooms <- rbind(dc_bloom, ky_bloom)
 ```
 
-## Build training and testing sets
+### Build training and testing sets
 ```{r}
 # Create training and test sets
 training_samples <- blooms$bloom_doy %>%
@@ -602,7 +616,7 @@ y <- train_data$bloom_doy
 x_test <- model.matrix(bloom_doy ~ ., test_data)[, -1]
 ```
 
-## Elastic Net regression
+### Elastic Net regression
 ```{r}
 ## Using elastic net regression to try to find best combination of alpha and lambda parameters
 
@@ -619,7 +633,7 @@ cv_elas_net <- train(
 (en_lambda <- cv_elas_net$bestTune)
 ```
 
-## Ridge regression with elastic net lambda
+### Ridge regression with elastic net lambda
 ```{r}
 # Fit elastic net regression model to training data using optimal 
 # lambda value found from cross validation
@@ -647,7 +661,9 @@ dcky_net <- tibble(test_data$location, blooms$year[-training_samples], test_data
 
 This is a much better result than anything produced previously. I will next try to add Liestal to the data.
 
-# Get Liestal data from NOAA database
+# Rework model adding in Liestal Data
+
+### Get Liestal data from NOAA database
 ```{r}
 ## Data base that had data for other 3 cities did not have data from Liestal so I will use te noaa package to get data
 liest <- ghcnd_search(
@@ -660,7 +676,7 @@ liest_max <- liest[[1]]
 liest_min <- liest[[2]]
 ```
 
-# Get into format to create model variables
+### Get into format to create model variables
 ```{r}
 # Join temps together with date
 li_weather <- liest_max %>%
@@ -692,7 +708,7 @@ colnames(li_weather)[4:5] <- c("tmin_K", "tmax_K")
 
 Model to find tavg must be created because simply taking the average of the max and min over the entire data set will create colinearity. 
 
-## To calculate tavg - need to create a model
+### To calculate tavg - need to create a model
 ```{r}
 weath_comb <- rbind(dc_weather, ky_weather)
 
@@ -726,7 +742,7 @@ li_weather$tavg_K <- predict(tavg_mod, li_weather)
 li_weather <- li_weather[, c(1:3, 7, 4:6)]
 ```
 
-# Import Liestal blossom data
+### Import Liestal blossom data
 ```{r}
 # Read in DC cherry tree data
 li_cherry <- read_csv("data/liestal.csv") %>%
@@ -735,7 +751,7 @@ li_cherry <- read_csv("data/liestal.csv") %>%
   filter(year != 2015)
 ```
 
-## Create new data frame with kyoto bloom data and modeling variables
+### Create new data frame with kyoto bloom data and modeling variables
 ```{r}
 # Filter cherry tree data for past 1954 (first year in which there is all data)
 li_cherry_w_weath <- li_cherry %>%
@@ -752,21 +768,21 @@ for (i in 2:nrow(li_cherry_w_weath)) {
 ```
 
 
-Create new model adding Liestal data
+# Create new model adding Liestal data
 
-## Combine rows of dc_bloom & ky_bloom
+### Combine rows of dc_bloom & ky_bloom
 ```{r}
 blooms <- rbind(dc_bloom, ky_bloom, li_bloom)
 ```
 
-## Build training and testing sets
+### Build training and testing sets
 ```{r}
 # Create training and test sets
 set.seed(1212)
 training_samples <- blooms$bloom_doy %>%
   createDataPartition(p = .75, list = FALSE)
-train_data <- blooms[training_samples, c(2,4:5, 7:22)]
-test_data <- blooms[-training_samples, c(2,4:5, 7:22)]
+train_data <- blooms[training_samples, c(2,4:5, 7:40)]
+test_data <- blooms[-training_samples, c(2,4:5, 7:40)]
 
 # Set up data in matrix to run ridge regression
 x <- model.matrix(bloom_doy ~ ., train_data)[, -1]
@@ -775,7 +791,7 @@ y <- train_data$bloom_doy
 x_test <- model.matrix(bloom_doy ~ ., test_data)[, -1]
 ```
 
-## Elastic Net regression
+### Elastic Net regression
 ```{r}
 ## Using elastic net regression to try to find best combination of alpha and lambda parameters
 
@@ -792,7 +808,7 @@ cv_elas_net <- train(
 (en_lambda <- cv_elas_net$bestTune)
 ```
 
-## elastic net regression for the 3 cities
+### elastic net regression for the 3 cities
 ```{r}
 # Fit elastic net regression model to training data using optimal lambda value found
 # from cross validation
@@ -815,9 +831,11 @@ tibble(
 dckyli_net <- tibble(test_data$location, blooms$year[-training_samples], test_data$bloom_doy, net_pred_dc_ky_li)
 ```
 
-The model that includes Liestal has a higher root mean squared error than the previous iteration of the model but is still a very accepable value. I would largely attribute that to missing by a lot on some of the outliers in the data set.
+The model that includes Liestal has a higher root mean squared error than the previous iteration of the model but is still a very acceptable value. 
 
-# Import Vancouver Weather and clean
+# Check prediction values on Vancouver weather data
+
+### Import Vancouver Weather and clean
 ```{r}
 van_weather <- read_csv("data/vancuv_weather.csv")
 
@@ -844,7 +862,7 @@ van_weather <- van_weather %>%
   ungroup()
 ```
 
-# Replace 1 missing tavg value with avg of values around it
+### Replace 1 missing tavg value with avg of values around it
 ```{r}
 ind <- which(is.na(van_weather$tavg))
 van_avg <- mean(van_weather$tavg[c((ind - 5):(ind - 1), (ind + 1):(ind + 5))])
@@ -852,7 +870,7 @@ van_weather$tavg[is.na(van_weather$tavg)] <- van_avg
 ```
 
 
-# Create model to replace missing tmin values
+### Create model to replace missing tmin values
 ```{r}
 van_na <- van_weather %>%
   filter(!is.na(tmax) | !is.na(tmin))
@@ -885,7 +903,7 @@ tmin_mod <- glm(tmin ~ tavg + days_into_year, data = van_na)
 van_weather$tmin[is.na(van_weather$tmin)] <- predict(tmin_mod, van_weather[is.na(van_weather$tmin), ])
 ```
 
-# Create model to replace missing tmin values
+### Create model to replace missing tmin values
 ```{r}
 van_na <- van_weather %>%
   filter(!is.na(tmax))
@@ -917,7 +935,7 @@ tmax_mod <- glm(tmax ~ tmin + tavg + days_into_year, data = van_na)
 van_weather$tmax[is.na(van_weather$tmax)] <- predict(tmax_mod, van_weather[is.na(van_weather$tmax), ])
 ```
 
-# Complete cleaning of vancouver weather data
+### Complete cleaning of vancouver weather data
 ```{r}
 # Remove unneeded variables 
 van_weather <- van_weather %>%
@@ -932,7 +950,7 @@ van_weather$tmax <- van_weather$tmax + 273.15
 colnames(van_weather)[4:6] <- c("tavg_K", "tmin_K", "tmax_K")
 ```
 
-## Create dummy df for vc bloom data
+### Create dummy df for vc bloom data
 ```{r}
 set.seed(1212)
 year <- c(1978:2004, 2006:2021)
@@ -949,7 +967,7 @@ vc_cherry <- tibble(
 )
 ```
 
-# Create data frame with variables for modeling
+### Create data frame with variables for modeling
 ```{r}
 vc_cherry_w_weath <- vc_cherry %>%
   filter(year >= 1978)
@@ -963,15 +981,17 @@ for (i in 2:nrow(vc_cherry_w_weath)) {
 }
 ```
 
-## Combine vancouver modeling dataset with test data from last model
+# Test model with Vancouver data
+
+### Combine vancouver modeling dataset with test data from last model
 ```{r}
-all_loc = rbind(test_data,vc_bloom[,c(2,4:5, 7:31)])
+all_loc = rbind(test_data,vc_bloom[,c(2,4:5, 7:40)])
 x_test <- model.matrix(bloom_doy ~ ., all_loc)[, -1]
 ```
 
 In this next part I am not looking for accuracy of the model but just make sure the predictions make sense. Because I do not have actual DOY for blooms in Vancouver, I can't find the actual accuracy. 
 
-## Run model from dc and kyoto to see if predictions make sense.
+### Run model from dc and kyoto to see if predictions make sense.
 ```{r}
 net_pred_dc_ky_li_vc <- fit_net_dc_ky_li %>%
   predict(x_test) %>%
@@ -986,7 +1006,7 @@ dckylivc_net <- tibble( all_loc$year, all_loc$bloom_doy, net_pred_dc_ky_li_vc)
 
 The numbers for the vancouver values seem in line with where they should be so I will now just rename the model for use in predicting next 10 years. 
 
-## Rename model
+### Rename model
 ```{r}
 next_10_years_model = fit_net_dc_ky_li
 ```
@@ -994,7 +1014,9 @@ next_10_years_model = fit_net_dc_ky_li
 
 Now that I have my model for predicting the bloom day, I need to have a model that predicts the temperatures of the next 10 years in each location and then predict the dates of bloom for the next 10 years. 
 
-## Add columns to all weather datasets then combine for modeling
+# Make model for predicting temperatures for next 10 years
+
+### Add columns to all weather datasets then combine for modeling
 ```{r}
 dc_weath_comb = dc_weather
 dc_weath_comb$location = "washingtondc"
@@ -1032,7 +1054,7 @@ weath_comb = rbind(dc_weath_comb,
                    vc_weath_comb)
 ```
 
-## Do cross validation for model 
+### Do cross validation for model 
 ```{r}
 
 set.seed(1212)
@@ -1057,7 +1079,7 @@ for (i in 1:k) {
 mean(cv.errors)
 ```
 
-# Create Models
+### Create Models
 ```{r}
 # Create model if CV error is satisfactory
 tavg_pred_model <- glm(tavg_K ~ poly(year + days_into_year + lat + long + alt + rand,10), data = weath_comb)
@@ -1066,7 +1088,10 @@ tmin_pred_model <- glm(tmin_K ~ poly(year + days_into_year + lat + long + alt + 
 
 ```
 
-# Create column of dates
+
+# Make Prediction for DC
+
+### Create column of dates
 ```{r}
 dates = tibble("date" = seq(as.Date("2022-01-01"),as.Date("2031-12-31"),"days")) %>%
   extract(date,
@@ -1084,7 +1109,7 @@ dates = tibble("date" = seq(as.Date("2022-01-01"),as.Date("2031-12-31"),"days"))
 
 ```
 
-# Create dataframe for DC predictions
+### Create dataframe for DC predictions
 ```{r}
 dc_weather_pred = dates[2:5]
 dc_weather_pred$location = "washingtondc"
@@ -1099,7 +1124,7 @@ dc_weather_pred$tmin_K = predict(tmin_pred_model,dc_weather_pred)
 
 ```
 
-# Replace already known weather data for 2022
+### Replace already known weather data for 2022
 ```{r}
 known_dc_2022 = read_csv("data/DC_weather.csv") 
 
@@ -1127,7 +1152,7 @@ dc_weather_pred$tavg_K[1:nrow(known_dc_2022)] = known_dc_2022$tavg_K
 
 ```
 
-# Get into format for predicting 
+### Get into format for predicting 
 ```{r}
 set.seed(1212)
 dc_bloom_pred = tibble("location" = "washingtondc",
@@ -1142,7 +1167,7 @@ dc_weather_pred = dc_weather_pred[,c(1:3,10:12,4)]
 
 ```
 
-# Create Variables for model input
+### Create Variables for model input
 ```{r}
 # Initialize tibble with first row
 dc_bloom_predictors <- as_tibble(bloom_merge(dc_bloom_pred, dc_weather_pred, 2022))
@@ -1154,8 +1179,9 @@ for (i in 2:nrow(dc_bloom_pred)) {
 }
 ```
 
+### Run model for DC
 ```{r}
-x_test <- model.matrix(bloom_doy ~ ., dc_bloom_predictors[,c(2,4:5, 7:22)])[, -1]
+x_test <- model.matrix(bloom_doy ~ ., dc_bloom_predictors[,c(2,4:5, 7:40)])[, -1]
 
 
 dc_fut_pred <- next_10_years_model %>%
@@ -1166,7 +1192,8 @@ dc_fut_pred <- next_10_years_model %>%
                          "prediction" = round(dc_fut_pred,0)))
 
 ```
-## Create Data Frame for all predictions
+
+### Create Data Frame for all predictions
 ```{r}
 final_predictions = tibble("year" = dc_predictions$year,
                            "kyoto" = 1,
@@ -1176,8 +1203,9 @@ final_predictions = tibble("year" = dc_predictions$year,
                            )
 ```
 
+# Make Predictions for Kyoto
 
-## Repeat for Kyoto
+### Repeat for Kyoto
 ```{r}
 ky_weather_pred = dates[2:5]
 ky_weather_pred$location = "kyoto"
@@ -1192,7 +1220,7 @@ ky_weather_pred$tmin_K = predict(tmin_pred_model,ky_weather_pred)
 
 ```
 
-# Replace already known weather data for 2022
+### Replace already known weather data for 2022
 ```{r}
 known_ky_2022 = read_csv("data/kyoto_weather.csv") 
 
@@ -1220,7 +1248,7 @@ ky_weather_pred$tavg_K[1:nrow(known_ky_2022)] = known_ky_2022$tavg_K
 
 ```
 
-# Get into format for predicting 
+### Get into format for predicting 
 ```{r}
 set.seed(1212)
 ky_bloom_pred = tibble("location" = "kyoto",
@@ -1235,7 +1263,7 @@ ky_weather_pred = ky_weather_pred[,c(1:3,10:12,4)]
 
 ```
 
-# Create Variables for model input
+### Create Variables for model input
 ```{r}
 # Initialize tibble with first row
 ky_bloom_predictors <- as_tibble(bloom_merge(ky_bloom_pred, ky_weather_pred, 2022))
@@ -1247,8 +1275,9 @@ for (i in 2:nrow(ky_bloom_pred)) {
 }
 ```
 
+### Run model
 ```{r}
-x_test <- model.matrix(bloom_doy ~ ., ky_bloom_predictors[,c(2,4:5, 7:22)])[, -1]
+x_test <- model.matrix(bloom_doy ~ ., ky_bloom_predictors[,c(2,4:5, 7:40)])[, -1]
 
 
 ky_fut_pred <- next_10_years_model %>%
@@ -1259,13 +1288,15 @@ ky_fut_pred <- next_10_years_model %>%
                          "prediction" = round(ky_fut_pred,0)))
 
 ```
+### Update final predictions
 ```{r}
 final_predictions$kyoto = ky_predictions$prediction
 
 ```
 
+# Make predictions for Vancouver
 
-## Repeat for Vancouver
+### Repeat for Vancouver
 ```{r}
 vc_weather_pred = dates[2:5]
 vc_weather_pred$location = "vancouver"
@@ -1280,7 +1311,7 @@ vc_weather_pred$tmin_K = predict(tmin_pred_model,vc_weather_pred)
 
 ```
 
-# Replace already known weather data for 2022
+### Replace already known weather data for 2022
 ```{r}
 known_vc_2022 = read_csv("data/vancuv_weather.csv") 
 
@@ -1308,7 +1339,7 @@ vc_weather_pred$tavg_K[1:nrow(known_vc_2022)] = known_vc_2022$tavg_K
 
 ```
 
-# Get into format for predicting 
+### Get into format for predicting 
 ```{r}
 set.seed(1212)
 vc_bloom_pred = tibble("location" = "vancouver",
@@ -1323,7 +1354,7 @@ vc_weather_pred = vc_weather_pred[,c(1:3,10:12,4)]
 
 ```
 
-# Create Variables for model input
+### Create Variables for model input
 ```{r}
 # Initialize tibble with first row
 vc_bloom_predictors <- as_tibble(bloom_merge(vc_bloom_pred, vc_weather_pred, 2022))
@@ -1335,8 +1366,9 @@ for (i in 2:nrow(vc_bloom_pred)) {
 }
 ```
 
+### Run Model
 ```{r}
-x_test <- model.matrix(bloom_doy ~ ., vc_bloom_predictors[,c(2,4:5, 7:22)])[, -1]
+x_test <- model.matrix(bloom_doy ~ ., vc_bloom_predictors[,c(2,4:5, 7:40)])[, -1]
 
 
 vc_fut_pred <- next_10_years_model %>%
@@ -1347,13 +1379,15 @@ vc_fut_pred <- next_10_years_model %>%
                          "prediction" = round(vc_fut_pred,0)))
 
 ```
+### Update final predictors
 ```{r}
 final_predictions$vancouver = vc_predictions$prediction
 
 ```
 
+# Make predictions for Liestal
 
-## Repeat for Liestal
+### Repeat for Liestal
 ```{r}
 li_weather_pred = dates[2:5]
 li_weather_pred$location = "liestal"
@@ -1369,7 +1403,7 @@ li_weather_pred$tmin_K = predict(tmin_pred_model,li_weather_pred)
 ```
 
 
-# Get into format for predicting 
+### Get into format for predicting 
 ```{r}
 set.seed(1212)
 li_bloom_pred = tibble("location" = "liestal",
@@ -1384,7 +1418,7 @@ li_weather_pred = li_weather_pred[,c(1:3,10:12,4)]
 
 ```
 
-# Create Variables for model input
+### Create Variables for model input
 ```{r}
 # Initialize tibble with first row
 li_bloom_predictors <- as_tibble(bloom_merge(li_bloom_pred, li_weather_pred, 2022))
@@ -1396,8 +1430,9 @@ for (i in 2:nrow(li_bloom_pred)) {
 }
 ```
 
+### Run model
 ```{r}
-x_test <- model.matrix(bloom_doy ~ ., li_bloom_predictors[,c(2,4:5, 7:22)])[, -1]
+x_test <- model.matrix(bloom_doy ~ ., li_bloom_predictors[,c(2,4:5, 7:40)])[, -1]
 
 
 li_fut_pred <- next_10_years_model %>%
@@ -1408,8 +1443,15 @@ li_fut_pred <- next_10_years_model %>%
                          "prediction" = round(li_fut_pred,0)))
 
 ```
-
+### Update predictions
 ```{r}
 final_predictions$liestal = li_predictions$prediction
+
+```
+
+
+# Save predictions as a .csv
+```{r}
+write_csv(final_predictions, file = "cherry-predictions.csv")
 
 ```
